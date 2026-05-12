@@ -29,13 +29,13 @@
     #msg {
       overflow-wrap: break-word;
     }
-    .warn,
-    .err {
+    .msg.warn,
+    .msg.err {
       margin-block-start: 1rem;
       padding-inline-start: 0.75rem;
       border-inline-start: 0.25rem solid var(--pico-muted-border-color);
     }
-    .err {
+    .msg.err {
       border-inline-start-color: var(--pico-form-element-invalid-border-color);
     }
   </style>
@@ -86,22 +86,42 @@
         msgEl.removeAttribute("role");
       }
 
-      function showError(text) {
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function renderMessage(kind, innerHtml) {
         statusEl.textContent = "";
-        msgEl.innerHTML = "";
-        var box = document.createElement("div");
-        box.className = "err";
-        box.setAttribute("role", "alert");
-        box.textContent = text;
-        msgEl.appendChild(box);
+        var role = kind === "err" ? "alert" : "status";
+        var cls = kind === "err" ? "msg err" : "msg warn";
+        msgEl.innerHTML =
+          '<div class="' + cls + '" role="' + role + '">' + innerHtml + "</div>";
+      }
+
+      function showError(text) {
+        renderMessage("err", "<p>" + escapeHtml(text) + "</p>");
       }
 
       function showInfo(text) {
-        msgEl.innerHTML = "";
-        var box = document.createElement("div");
-        box.className = "warn";
-        box.textContent = text;
-        msgEl.appendChild(box);
+        renderMessage("warn", "<p>" + escapeHtml(text) + "</p>");
+      }
+
+      function showProtectedFileHelp() {
+        renderMessage(
+          "err",
+          "<p><strong>This does not look like a normal HTML file.</strong></p>" +
+            "<p>It may be encrypted or protected by a work app such as Outlook, SharePoint, OneDrive, or Microsoft Intune.</p>" +
+            "<ul>" +
+            "<li>Open it directly in an approved work browser, such as Microsoft Edge.</li>" +
+            "<li>Ask the sender to share a SharePoint or OneDrive link instead of an HTML attachment.</li>" +
+            "<li>Ask IT whether HTML attachments can be opened or saved outside managed apps.</li>" +
+            "</ul>"
+        );
       }
 
       function hasHtmlExtension(name) {
@@ -119,10 +139,11 @@
 
       function looksLikeManagedOrProtectedFile(text) {
         var head = text.slice(0, 64);
+        var headLower = head.toLowerCase();
 
         return (
-          head.indexOf("MSMAMARPCRYPT") !== -1 ||
-          head.indexOf(".pfile") === 0
+          headLower.indexOf("msmamarpcrypt") !== -1 ||
+          headLower.indexOf(".pfile") === 0
         );
       }
 
@@ -140,36 +161,6 @@
         return suspicious / len > 0.05;
       }
 
-      function showProtectedFileHelp() {
-        statusEl.textContent = "";
-        msgEl.innerHTML = "";
-        var box = document.createElement("div");
-        box.className = "err";
-        box.setAttribute("role", "alert");
-        var titleP = document.createElement("p");
-        var titleStrong = document.createElement("strong");
-        titleStrong.textContent = "This does not look like a normal HTML file.";
-        titleP.appendChild(titleStrong);
-        box.appendChild(titleP);
-        var bodyP = document.createElement("p");
-        bodyP.textContent =
-          "It may be encrypted or protected by a work app such as Outlook, SharePoint, OneDrive, or Microsoft Intune.";
-        box.appendChild(bodyP);
-        var ul = document.createElement("ul");
-        var tips = [
-          "Open it directly in an approved work browser, such as Microsoft Edge.",
-          "Ask the sender to share a SharePoint or OneDrive link instead of an HTML attachment.",
-          "Ask IT whether HTML attachments can be opened or saved outside managed apps.",
-        ];
-        for (var t = 0; t < tips.length; t++) {
-          var li = document.createElement("li");
-          li.textContent = tips[t];
-          ul.appendChild(li);
-        }
-        box.appendChild(ul);
-        msgEl.appendChild(box);
-      }
-
       pickBtn.addEventListener("click", function () {
         clearMessages();
         statusEl.textContent = "";
@@ -182,11 +173,10 @@
         fileInput.value = "";
         if (!file) return;
 
-        statusEl.textContent = "Opening file locally…";
+        statusEl.textContent = "Opening file…";
 
         file.text().then(function (html) {
-          if (looksLikeManagedOrProtectedFile(html) || looksMostlyBinary(html)) {
-            statusEl.textContent = "";
+          if (looksLikeManagedOrProtectedFile(html)) {
             showProtectedFileHelp();
             return;
           }
@@ -194,8 +184,12 @@
           var extOk = hasHtmlExtension(file.name);
           var contentOk = looksLikeHtml(html);
 
+          if (looksMostlyBinary(html) && !extOk && !contentOk) {
+            showProtectedFileHelp();
+            return;
+          }
+
           if (!extOk && !contentOk) {
-            statusEl.textContent = "";
             showError(
               "This file does not look like an HTML file. Choose a file that ends with .html or .htm."
             );
@@ -213,11 +207,9 @@
             var url = URL.createObjectURL(blob);
             window.location.href = url;
           } catch (e) {
-            statusEl.textContent = "";
             showError("Something went wrong while opening the file. You can try again or pick a different file.");
           }
         }).catch(function () {
-          statusEl.textContent = "";
           showError("Could not read that file. It may be unavailable or your browser may not allow access. Try choosing the file again.");
         });
       });
