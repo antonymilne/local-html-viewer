@@ -117,6 +117,59 @@
         return s.toLowerCase().indexOf("<body") !== -1;
       }
 
+      function looksLikeManagedOrProtectedFile(text) {
+        var head = text.slice(0, 64);
+
+        return (
+          head.indexOf("MSMAMARPCRYPT") !== -1 ||
+          head.indexOf(".pfile") === 0
+        );
+      }
+
+      function looksMostlyBinary(text) {
+        var sample = text.slice(0, 2048);
+        var len = sample.length;
+        if (len === 0) return false;
+        var suspicious = 0;
+        for (var i = 0; i < len; i++) {
+          var c = sample.charCodeAt(i);
+          if (c === 0 || (c < 32 && c !== 9 && c !== 10 && c !== 13)) {
+            suspicious++;
+          }
+        }
+        return suspicious / len > 0.05;
+      }
+
+      function showProtectedFileHelp() {
+        statusEl.textContent = "";
+        msgEl.innerHTML = "";
+        var box = document.createElement("div");
+        box.className = "err";
+        box.setAttribute("role", "alert");
+        var titleP = document.createElement("p");
+        var titleStrong = document.createElement("strong");
+        titleStrong.textContent = "This does not look like a normal HTML file.";
+        titleP.appendChild(titleStrong);
+        box.appendChild(titleP);
+        var bodyP = document.createElement("p");
+        bodyP.textContent =
+          "It may be encrypted or protected by a work app such as Outlook, SharePoint, OneDrive, or Microsoft Intune.";
+        box.appendChild(bodyP);
+        var ul = document.createElement("ul");
+        var tips = [
+          "Open it directly in an approved work browser, such as Microsoft Edge.",
+          "Ask the sender to share a SharePoint or OneDrive link instead of an HTML attachment.",
+          "Ask IT whether HTML attachments can be opened or saved outside managed apps.",
+        ];
+        for (var t = 0; t < tips.length; t++) {
+          var li = document.createElement("li");
+          li.textContent = tips[t];
+          ul.appendChild(li);
+        }
+        box.appendChild(ul);
+        msgEl.appendChild(box);
+      }
+
       pickBtn.addEventListener("click", function () {
         clearMessages();
         statusEl.textContent = "";
@@ -132,13 +185,19 @@
         statusEl.textContent = "Opening file locally…";
 
         file.text().then(function (html) {
+          if (looksLikeManagedOrProtectedFile(html) || looksMostlyBinary(html)) {
+            statusEl.textContent = "";
+            showProtectedFileHelp();
+            return;
+          }
+
           var extOk = hasHtmlExtension(file.name);
           var contentOk = looksLikeHtml(html);
 
           if (!extOk && !contentOk) {
             statusEl.textContent = "";
             showError(
-              "This file does not look like an HTML file. Choose a file that ends with .html or .htm, or save it as HTML and try again."
+              "This file does not look like an HTML file. Choose a file that ends with .html or .htm."
             );
             return;
           }
