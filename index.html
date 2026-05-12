@@ -72,146 +72,157 @@
     (function () {
       "use strict";
 
-      /**
-       * Local-only flow: the selected file is read with file.text() in the browser.
-       * Contents are never uploaded or sent anywhere by this script; the Pico stylesheet is loaded from a CDN.
-       */
-      var fileInput = document.getElementById("file");
-      var pickBtn = document.getElementById("pick");
-      var statusEl = document.getElementById("status");
-      var msgEl = document.getElementById("msg");
+      // Local-only flow: the selected file is read with file.text() in the browser.
+      // Contents are never uploaded or sent anywhere by this script; the Pico
+      // stylesheet is loaded from a CDN.
+      const fileInput = document.getElementById("file");
+      const pickBtn = document.getElementById("pick");
+      const statusEl = document.getElementById("status");
+      const msgEl = document.getElementById("msg");
+
+      function el(tag, attrs, ...children) {
+        const node = document.createElement(tag);
+        if (attrs) {
+          for (const [name, value] of Object.entries(attrs)) {
+            if (value == null) continue;
+            if (name === "class") node.className = value;
+            else node.setAttribute(name, value);
+          }
+        }
+        for (const child of children) {
+          if (child == null) continue;
+          node.append(typeof child === "string" ? document.createTextNode(child) : child);
+        }
+        return node;
+      }
 
       function clearMessages() {
-        msgEl.textContent = "";
-        msgEl.removeAttribute("role");
-      }
-
-      function escapeHtml(s) {
-        return String(s)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
-      }
-
-      function renderMessage(kind, innerHtml) {
         statusEl.textContent = "";
-        var role = kind === "err" ? "alert" : "status";
-        var cls = kind === "err" ? "msg err" : "msg warn";
-        msgEl.innerHTML =
-          '<div class="' + cls + '" role="' + role + '">' + innerHtml + "</div>";
+        msgEl.replaceChildren();
+      }
+
+      function renderMessage(kind, ...children) {
+        clearMessages();
+        msgEl.append(el("div", {
+          class: kind === "err" ? "msg err" : "msg warn",
+          role: kind === "err" ? "alert" : "status",
+        }, ...children));
       }
 
       function showError(text) {
-        renderMessage("err", "<p>" + escapeHtml(text) + "</p>");
+        renderMessage("err", el("p", null, text));
       }
 
       function showInfo(text) {
-        renderMessage("warn", "<p>" + escapeHtml(text) + "</p>");
+        renderMessage("warn", el("p", null, text));
       }
 
       function showProtectedFileHelp() {
         renderMessage(
           "err",
-          "<p><strong>This does not look like a normal HTML file.</strong></p>" +
-            "<p>It may be encrypted or protected by a work app such as Outlook, SharePoint, OneDrive, or Microsoft Intune.</p>" +
-            "<ul>" +
-            "<li>Open it directly in an approved work browser, such as Microsoft Edge.</li>" +
-            "<li>Ask the sender to share a SharePoint or OneDrive link instead of an HTML attachment.</li>" +
-            "<li>Ask IT whether HTML attachments can be opened or saved outside managed apps.</li>" +
-            "</ul>"
+          el("p", null, el("strong", null, "This does not look like a normal HTML file.")),
+          el("p", null, "It may be encrypted or protected by a work app such as Outlook, SharePoint, OneDrive, or Microsoft Intune."),
+          el("ul", null,
+            el("li", null, "Open it directly in an approved work browser, such as Microsoft Edge."),
+            el("li", null, "Ask the sender to share a SharePoint or OneDrive link instead of an HTML attachment."),
+            el("li", null, "Ask IT whether HTML attachments can be opened or saved outside managed apps."),
+          ),
         );
       }
 
       function hasHtmlExtension(name) {
-        var lower = name.toLowerCase();
+        const lower = name.toLowerCase();
         return lower.endsWith(".html") || lower.endsWith(".htm");
       }
 
       function looksLikeHtml(html) {
-        var s = html.replace(/^\uFEFF/, "").trimStart();
-        var head = s.slice(0, 32).toLowerCase();
+        const s = html.replace(/^\uFEFF/, "").trimStart();
+        const head = s.slice(0, 32).toLowerCase();
         if (head.startsWith("<!doctype html")) return true;
         if (head.startsWith("<html")) return true;
-        return s.toLowerCase().indexOf("<body") !== -1;
+        return s.toLowerCase().includes("<body");
       }
 
+      // Narrow sniff for Intune/MAM-wrapped HTML attachments — extend list as needed.
       function looksLikeManagedOrProtectedFile(text) {
-        var head = text.slice(0, 64);
-        var headLower = head.toLowerCase();
-
+        const headLower = text.slice(0, 64).toLowerCase();
         return (
-          headLower.indexOf("msmamarpcrypt") !== -1 ||
-          headLower.indexOf(".pfile") === 0
+          headLower.includes("msmamarpcrypt") ||
+          headLower.startsWith(".pfile")
         );
       }
 
+      // Heuristic: >5% control/NUL bytes in the first 2 KB usually means non-text.
       function looksMostlyBinary(text) {
-        var sample = text.slice(0, 2048);
-        var len = sample.length;
-        if (len === 0) return false;
-        var suspicious = 0;
-        for (var i = 0; i < len; i++) {
-          var c = sample.charCodeAt(i);
+        const sample = text.slice(0, 2048);
+        if (sample.length === 0) return false;
+        let suspicious = 0;
+        for (let i = 0; i < sample.length; i++) {
+          const c = sample.charCodeAt(i);
           if (c === 0 || (c < 32 && c !== 9 && c !== 10 && c !== 13)) {
             suspicious++;
           }
         }
-        return suspicious / len > 0.05;
+        return suspicious / sample.length > 0.05;
       }
 
-      pickBtn.addEventListener("click", function () {
+      function openHtmlInPlace(html) {
+        const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        window.addEventListener("pagehide", () => URL.revokeObjectURL(url), { once: true });
+        window.location.href = url;
+      }
+
+      pickBtn.addEventListener("click", () => {
         clearMessages();
-        statusEl.textContent = "";
         fileInput.click();
       });
 
-      fileInput.addEventListener("change", function () {
+      fileInput.addEventListener("change", async () => {
         clearMessages();
-        var file = fileInput.files && fileInput.files[0];
+        const file = fileInput.files && fileInput.files[0];
         fileInput.value = "";
         if (!file) return;
 
         statusEl.textContent = "Opening file…";
 
-        file.text().then(function (html) {
-          if (looksLikeManagedOrProtectedFile(html)) {
-            showProtectedFileHelp();
-            return;
-          }
-
-          var extOk = hasHtmlExtension(file.name);
-          var contentOk = looksLikeHtml(html);
-
-          if (looksMostlyBinary(html) && !extOk && !contentOk) {
-            showProtectedFileHelp();
-            return;
-          }
-
-          if (!extOk && !contentOk) {
-            showError(
-              "This file does not look like an HTML file. Choose a file that ends with .html or .htm."
-            );
-            return;
-          }
-
-          if (!extOk && contentOk) {
-            showInfo(
-              "This file does not have a typical HTML ending (.html or .htm), but the contents look like HTML. Opening it locally anyway."
-            );
-          }
-
-          try {
-            var blob = new Blob([html], { type: "text/html;charset=utf-8" });
-            var url = URL.createObjectURL(blob);
-            window.location.href = url;
-          } catch (e) {
-            showError("Something went wrong while opening the file. You can try again or pick a different file.");
-          }
-        }).catch(function () {
+        let html;
+        try {
+          html = await file.text();
+        } catch (err) {
+          console.error(err);
           showError("Could not read that file. It may be unavailable or your browser may not allow access. Try choosing the file again.");
-        });
+          return;
+        }
+
+        if (looksLikeManagedOrProtectedFile(html)) {
+          showProtectedFileHelp();
+          return;
+        }
+
+        const extOk = hasHtmlExtension(file.name);
+        const contentOk = looksLikeHtml(html);
+
+        if (looksMostlyBinary(html) && !extOk && !contentOk) {
+          showProtectedFileHelp();
+          return;
+        }
+
+        if (!extOk && !contentOk) {
+          showError("This file does not look like an HTML file. Choose a file that ends with .html or .htm.");
+          return;
+        }
+
+        if (!extOk && contentOk) {
+          showInfo("This file does not have a typical HTML ending (.html or .htm), but the contents look like HTML. Opening it locally anyway.");
+        }
+
+        try {
+          openHtmlInPlace(html);
+        } catch (err) {
+          console.error(err);
+          showError("Something went wrong while opening the file. You can try again or pick a different file.");
+        }
       });
     })();
   </script>
